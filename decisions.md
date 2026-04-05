@@ -111,15 +111,17 @@ Decision:
 
 ## 4. Problem 2: Bulk Payroll Queue Decision
 
-Target design (required, pending implementation):
-- BullMQ queue partitioned by employer account.
-- Concurrency = 1 per employer account.
+Implemented design:
+- BullMQ queue partitioned by employer account (`payroll:<employerAccountId>`).
+- Exactly one BullMQ worker per employer queue with `concurrency: 1`.
+- Batch ingestion endpoint enqueues one credit job per employee in that employer queue.
 
-Why this is preferred over DB lock-heavy strategies for 14,000 credits from one source account:
-- Prevents intra-employer race conditions deterministically by serialization.
-- Avoids long lock wait chains and deadlock pressure under burst traffic.
-- Preserves throughput globally because different employers can process in parallel.
-- Makes retry/error handling simpler at job granularity.
+Why this is better than DB lock-heavy strategies for 14,000 credits from one source account:
+- Deterministic serialization for one employer eliminates same-source race conditions by design, not by lock timing luck.
+- Removes large lock wait queues on the source wallet row and lowers deadlock/retry storms under burst traffic.
+- Keeps high system throughput because other employers use separate queues and workers and can progress in parallel.
+- Retries are scoped to failed jobs only, so one bad credit does not force replay of the full 14,000-item batch.
+- Queue backpressure is explicit and observable (queued, active, failed counts), unlike opaque DB lock contention.
 
 ## 5. Problem 3: FX Locking Decisions
 

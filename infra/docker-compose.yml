@@ -12,12 +12,16 @@ services:
       POSTGRES_DB: novapay
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
       FX_PROVIDER_UP: ${FX_PROVIDER_UP:-true}
       OTEL_SERVICE_NAME: novapay-api
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://jaeger:4318/v1/traces
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_started
       jaeger:
         condition: service_started
     ports:
@@ -39,6 +43,13 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: novapay-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
 
   jaeger:
     image: jaegertracing/all-in-one:1.57

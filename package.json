@@ -20,9 +20,11 @@
     "@prisma/client": "^7.6.0",
     "axios": "^1.14.0",
     "bcrypt": "^6.0.0",
+    "bullmq": "^5.73.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.0",
     "express": "^5.2.1",
+    "ioredis": "^5.10.1",
     "pg": "^8.20.0",
     "prom-client": "^15.1.3"
   }

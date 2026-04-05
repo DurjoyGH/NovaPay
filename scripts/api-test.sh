@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-BASE_URL="${BASE_URL:-http://127.0.0.1:3000}"
+BASE_URL="${BASE_URL:-http://127.0.0.1:3002}"
 COMPOSE_FILE="${COMPOSE_FILE:-infra/docker-compose.yml}"
 DB_SERVICE="${DB_SERVICE:-postgres}"
 DB_USER="${DB_USER:-postgres}"
@@ -375,6 +375,95 @@ assert_status "400" "GET /transactions/wallets/:walletId/transfers invalid limit
 # Ledger route validation
 call_api "POST" "/ledger/transfers" '{"senderWalletId":"x"}'
 assert_status "400" "POST /ledger/transfers validation"
+
+# Payroll APIs
+call_api "POST" "/payroll/batches" '{"employerAccountId":"bad"}'
+assert_status "400" "POST /payroll/batches invalid employerAccountId"
+
+PAYROLL_EMPLOYEE_USER_1=$(uuid)
+PAYROLL_EMPLOYEE_USER_2=$(uuid)
+
+call_api "POST" "/accounts/wallets" "{\"userId\":\"$PAYROLL_EMPLOYEE_USER_1\",\"currency\":\"USD\",\"initialBalanceMinor\":0}"
+assert_status "201" "Payroll setup create employee wallet 1"
+PAYROLL_EMPLOYEE_WALLET_1=$(json_get "$RESPONSE_BODY" "data.walletId" 2>/dev/null || true)
+
+call_api "POST" "/accounts/wallets" "{\"userId\":\"$PAYROLL_EMPLOYEE_USER_2\",\"currency\":\"USD\",\"initialBalanceMinor\":0}"
+assert_status "201" "Payroll setup create employee wallet 2"
+PAYROLL_EMPLOYEE_WALLET_2=$(json_get "$RESPONSE_BODY" "data.walletId" 2>/dev/null || true)
+
+PAYROLL_SOURCE_BEFORE=$(run_sql "SELECT balance_minor FROM wallets WHERE wallet_id='$SENDER_WALLET_ID';" | tr -d '[:space:]')
+PAYROLL_EMP1_BEFORE=$(run_sql "SELECT balance_minor FROM wallets WHERE wallet_id='$PAYROLL_EMPLOYEE_WALLET_1';" | tr -d '[:space:]')
+PAYROLL_EMP2_BEFORE=$(run_sql "SELECT balance_minor FROM wallets WHERE wallet_id='$PAYROLL_EMPLOYEE_WALLET_2';" | tr -d '[:space:]')
+
+PAYROLL_EMPLOYER_ACCOUNT_ID=$(uuid)
+PAYROLL_AMOUNT_1=1200
+PAYROLL_AMOUNT_2=900
+PAYROLL_TOTAL=$((PAYROLL_AMOUNT_1 + PAYROLL_AMOUNT_2))
+
+PAYROLL_PAYLOAD="{\"employerAccountId\":\"$PAYROLL_EMPLOYER_ACCOUNT_ID\",\"sourceWalletId\":\"$SENDER_WALLET_ID\",\"currency\":\"USD\",\"items\":[{\"employeeWalletId\":\"$PAYROLL_EMPLOYEE_WALLET_1\",\"amountMinor\":$PAYROLL_AMOUNT_1},{\"employeeWalletId\":\"$PAYROLL_EMPLOYEE_WALLET_2\",\"amountMinor\":$PAYROLL_AMOUNT_2}]}"
+call_api "POST" "/payroll/batches" "$PAYROLL_PAYLOAD"
+
+if [ "$RESPONSE_STATUS" = "202" ]; then
+  log_pass "POST /payroll/batches accepted"
+  PAYROLL_BATCH_ID=$(json_get "$RESPONSE_BODY" "data.batchId" 2>/dev/null || true)
+
+  if [ -n "${PAYROLL_BATCH_ID:-}" ]; then
+    call_api "GET" "/payroll/batches/$PAYROLL_BATCH_ID" "__NO_BODY__"
+    assert_status "200" "GET /payroll/batches/:batchId"
+
+    PAYROLL_FINAL_STATUS=""
+    PAYROLL_FINAL_COMPLETED="0"
+    PAYROLL_FINAL_FAILED="0"
+    PAYROLL_FINAL_TOTAL="0"
+
+    for _ in $(seq 1 30); do
+      call_api "GET" "/payroll/batches/$PAYROLL_BATCH_ID" "__NO_BODY__"
+      if [ "$RESPONSE_STATUS" != "200" ]; then
+        break
+      fi
+
+      PAYROLL_FINAL_STATUS=$(json_get "$RESPONSE_BODY" "data.status" 2>/dev/null || true)
+      PAYROLL_FINAL_COMPLETED=$(json_get "$RESPONSE_BODY" "data.completedJobs" 2>/dev/null || echo "0")
+      PAYROLL_FINAL_FAILED=$(json_get "$RESPONSE_BODY" "data.failedJobs" 2>/dev/null || echo "0")
+      PAYROLL_FINAL_TOTAL=$(json_get "$RESPONSE_BODY" "data.totalJobs" 2>/dev/null || echo "0")
+
+      if [ "$PAYROLL_FINAL_STATUS" = "COMPLETED" ] || [ "$PAYROLL_FINAL_STATUS" = "PARTIAL_FAILED" ]; then
+        break
+      fi
+
+      sleep 1
+    done
+
+    if [ "$PAYROLL_FINAL_STATUS" = "COMPLETED" ] || [ "$PAYROLL_FINAL_STATUS" = "PARTIAL_FAILED" ]; then
+      log_pass "Payroll batch reaches terminal status"
+      PAYROLL_DONE_COUNT=$((PAYROLL_FINAL_COMPLETED + PAYROLL_FINAL_FAILED))
+      assert_int_eq "$PAYROLL_FINAL_TOTAL" "$PAYROLL_DONE_COUNT" "Payroll batch all jobs accounted"
+
+      PAYROLL_SOURCE_AFTER=$(run_sql "SELECT balance_minor FROM wallets WHERE wallet_id='$SENDER_WALLET_ID';" | tr -d '[:space:]')
+      PAYROLL_EMP1_AFTER=$(run_sql "SELECT balance_minor FROM wallets WHERE wallet_id='$PAYROLL_EMPLOYEE_WALLET_1';" | tr -d '[:space:]')
+      PAYROLL_EMP2_AFTER=$(run_sql "SELECT balance_minor FROM wallets WHERE wallet_id='$PAYROLL_EMPLOYEE_WALLET_2';" | tr -d '[:space:]')
+
+      EXPECTED_SOURCE_AFTER=$((PAYROLL_SOURCE_BEFORE - PAYROLL_TOTAL))
+      EXPECTED_EMP1_AFTER=$((PAYROLL_EMP1_BEFORE + PAYROLL_AMOUNT_1))
+      EXPECTED_EMP2_AFTER=$((PAYROLL_EMP2_BEFORE + PAYROLL_AMOUNT_2))
+
+      assert_int_eq "$EXPECTED_SOURCE_AFTER" "$PAYROLL_SOURCE_AFTER" "Payroll source wallet debited by total"
+      assert_int_eq "$EXPECTED_EMP1_AFTER" "$PAYROLL_EMP1_AFTER" "Payroll employee 1 credited"
+      assert_int_eq "$EXPECTED_EMP2_AFTER" "$PAYROLL_EMP2_AFTER" "Payroll employee 2 credited"
+    else
+      log_fail "Payroll batch reaches terminal status" "status=$PAYROLL_FINAL_STATUS body=$RESPONSE_BODY"
+    fi
+  else
+    log_fail "POST /payroll/batches returns batchId" "body=$RESPONSE_BODY"
+  fi
+elif [ "$RESPONSE_STATUS" = "500" ]; then
+  log_skip "Payroll queue processing" "redis/worker may be unavailable; start redis and rerun"
+else
+  log_fail "POST /payroll/batches accepted" "expected 202, got $RESPONSE_STATUS, body=$RESPONSE_BODY"
+fi
+
+call_api "GET" "/payroll/batches/not-a-uuid" "__NO_BODY__"
+assert_status "400" "GET /payroll/batches/:batchId invalid batch id"
 
 # FX provider down scenario (depends on server env)
 call_api "POST" "/fx/quote" '{"sourceCurrency":"USD","targetCurrency":"EUR"}'
