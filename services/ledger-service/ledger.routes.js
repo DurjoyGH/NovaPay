@@ -19,6 +19,7 @@ function createLedgerRouter({ dbPool }) {
       }
 
       const transfer = await ledgerService.createTransfer(req.body);
+      req.transactionId = transfer.transferId || req.transactionId;
 
       const statusCode = transfer.idempotentReplay ? 200 : 201;
 

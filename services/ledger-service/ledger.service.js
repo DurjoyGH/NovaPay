@@ -1,4 +1,5 @@
 const { randomUUID, createHash } = require("crypto");
+const { incrementLedgerInvariantViolation } = require("../../shared/observability/metrics");
 
 function hashPayload(payload) {
   return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
@@ -272,6 +273,7 @@ function createLedgerService({ dbPool }) {
       );
 
       if (check.rows[0].debit !== check.rows[0].credit) {
+        incrementLedgerInvariantViolation();
         throw new Error("LEDGER_INVARIANT_VIOLATION");
       }
 

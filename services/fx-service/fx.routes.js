@@ -1,6 +1,7 @@
 const express = require("express");
 const { randomUUID } = require("crypto");
 const { createFxService } = require("./fx.service");
+const { logInfo } = require("../../shared/observability/logger");
 
 function createFxRouter({ dbPool }) {
   const router = express.Router();
@@ -13,11 +14,13 @@ function createFxRouter({ dbPool }) {
 
   router.post("/quote", async (req, res, next) => {
     try {
-      console.log({
+      logInfo({
+        message: "fx_quote_issue",
         requestId: req.requestId,
+        userId: req.headers["x-user-id"] || "anonymous",
+        transactionId: req.headers["x-transaction-id"] || null,
         route: req.originalUrl,
-        method: req.method,
-        timestamp: new Date().toISOString(),
+        method: req.method
       });
 
       if (!req.is("application/json")) {
@@ -53,11 +56,13 @@ function createFxRouter({ dbPool }) {
 
   router.get("/quote/:quoteId", async (req, res, next) => {
     try {
-      console.log({
+      logInfo({
+        message: "fx_quote_get",
         requestId: req.requestId,
+        userId: req.headers["x-user-id"] || "anonymous",
+        transactionId: req.headers["x-transaction-id"] || null,
         route: req.originalUrl,
-        method: req.method,
-        timestamp: new Date().toISOString(),
+        method: req.method
       });
 
       const quote = await fxService.getQuote(req.params.quoteId);

@@ -1,0 +1,12 @@
+groups:
+  - name: novapay-ledger-alerts
+    rules:
+      - alert: LedgerInvariantViolationCritical
+        expr: novapay_ledger_invariant_violations_total > 0
+        for: 0s
+        labels:
+          severity: critical
+          service: ledger
+        annotations:
+          summary: "Ledger invariant violation detected"
+          description: "Ledger invariant violation count is nonzero. Critical financial integrity incident."

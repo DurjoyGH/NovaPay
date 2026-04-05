@@ -12,9 +12,14 @@ services:
       POSTGRES_DB: novapay
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
+      FX_PROVIDER_UP: ${FX_PROVIDER_UP:-true}
+      OTEL_SERVICE_NAME: novapay-api
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://jaeger:4318/v1/traces
     depends_on:
       postgres:
         condition: service_healthy
+      jaeger:
+        condition: service_started
     ports:
       - "${APP_HOST_PORT:-3002}:3000"
 
@@ -34,6 +39,47 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    container_name: novapay-jaeger
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"
+      - "4318:4318"
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: novapay-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - app
+
+  grafana:
+    image: grafana/grafana:11.1.4
+    container_name: novapay-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
       
 volumes:
   novapay_pgdata:

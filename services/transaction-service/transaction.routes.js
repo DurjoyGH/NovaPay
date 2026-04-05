@@ -28,6 +28,8 @@ function createTransactionRouter({ dbPool }) {
         "idempotency-key": idempotencyKey,
       });
 
+      req.transactionId = transfer.transferId || req.transactionId;
+
       res.status(transfer.idempotentReplay ? 200 : 201).json({
         ok: true,
         data: transfer,
