@@ -1,5 +1,6 @@
 const cors = require("cors");
 const express = require("express");
+const { createAccountRouter } = require("./services/account-service/account.routes");
 const { createLedgerRouter } = require("./services/ledger-service/ledger.routes");
 
 function createServer({ dbPool }) {
@@ -34,6 +35,7 @@ function createServer({ dbPool }) {
   });
 
   app.use("/ledger", createLedgerRouter({ dbPool }));
+  app.use("/accounts", createAccountRouter({ dbPool }));
 
   app.use((error, req, res, next) => {
     const statusCode = error.statusCode || 500;
