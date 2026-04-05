@@ -1,6 +1,7 @@
 const cors = require("cors");
 const express = require("express");
 const { createAccountRouter } = require("./services/account-service/account.routes");
+const { createFxRouter } = require("./services/fx-service/fx.routes");
 const { createLedgerRouter } = require("./services/ledger-service/ledger.routes");
 const { createTransactionRouter } = require("./services/transaction-service/transaction.routes");
 
@@ -37,6 +38,7 @@ function createServer({ dbPool }) {
 
   app.use("/ledger", createLedgerRouter({ dbPool }));
   app.use("/accounts", createAccountRouter({ dbPool }));
+  app.use("/fx", createFxRouter({ dbPool }));
   app.use("/transactions", createTransactionRouter({ dbPool }));
 
   app.use((error, req, res, next) => {
