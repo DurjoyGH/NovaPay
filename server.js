@@ -1,5 +1,6 @@
 const cors = require("cors");
 const express = require("express");
+const { createLedgerRouter } = require("./services/ledger-service/ledger.routes");
 
 function createServer({ dbPool }) {
   const app = express();
@@ -30,6 +31,19 @@ function createServer({ dbPool }) {
         error: "DB_UNAVAILABLE",
       });
     }
+  });
+
+  app.use("/ledger", createLedgerRouter({ dbPool }));
+
+  app.use((error, req, res, next) => {
+    const statusCode = error.statusCode || 500;
+    const code = error.message || "INTERNAL_ERROR";
+
+    res.status(statusCode).json({
+      ok: false,
+      error: code,
+      timestamp: new Date().toISOString()
+    });
   });
 
   return app;
