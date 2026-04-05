@@ -2,6 +2,7 @@ const cors = require("cors");
 const express = require("express");
 const { createAccountRouter } = require("./services/account-service/account.routes");
 const { createLedgerRouter } = require("./services/ledger-service/ledger.routes");
+const { createTransactionRouter } = require("./services/transaction-service/transaction.routes");
 
 function createServer({ dbPool }) {
   const app = express();
@@ -36,6 +37,7 @@ function createServer({ dbPool }) {
 
   app.use("/ledger", createLedgerRouter({ dbPool }));
   app.use("/accounts", createAccountRouter({ dbPool }));
+  app.use("/transactions", createTransactionRouter({ dbPool }));
 
   app.use((error, req, res, next) => {
     const statusCode = error.statusCode || 500;
