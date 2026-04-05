@@ -4,38 +4,27 @@ This README documents what is currently implemented in this project, in simple l
 
 ## 1. Setup Instructions and Run Steps
 
+This project is intended to be self-contained with Docker.
+
 Prerequisites:
-- Node.js 20+
 - Docker + Docker Compose
 
-Install dependencies:
+Build and start everything from Docker:
 
 ```bash
-npm install
+docker compose -f infra/docker-compose.yml up -d --build
 ```
 
-Start infrastructure:
+Open the system:
+- API base: `http://localhost:3002`
+- Prometheus: `http://localhost:9090`
+- Grafana: `http://localhost:3001`
+- Jaeger: `http://localhost:16686`
+
+Stop containers:
 
 ```bash
-docker compose -f infra/docker-compose.yml up -d postgres redis
-```
-
-Start app:
-
-```bash
-npm start
-```
-
-Run API regression tests:
-
-```bash
-npm run api:test
-```
-
-Optional observability stack:
-
-```bash
-docker compose -f infra/docker-compose.yml up -d jaeger prometheus grafana
+docker compose -f infra/docker-compose.yml down
 ```
 
 ## 2. API Endpoint Summary (With One Example Per Endpoint)
