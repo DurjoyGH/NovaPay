@@ -13,6 +13,9 @@ function toPublicTransfer(row, idempotentReplay) {
     amountMinor: Number(row.amount_minor),
     currency: row.currency,
     status: row.status,
+    fxQuoteId: row.fx_quote_id,
+    fxRateLocked:
+      row.fx_rate_locked === null ? null : Number(row.fx_rate_locked),
     idempotentReplay,
   };
 }
@@ -22,7 +25,8 @@ function isSameTransferPayload(existing, payload) {
     existing.sender_wallet_id === payload.senderWalletId &&
     existing.receiver_wallet_id === payload.receiverWalletId &&
     Number(existing.amount_minor) === Number(payload.amountMinor) &&
-    existing.currency === payload.currency.toUpperCase()
+    existing.currency === payload.currency.toUpperCase() &&
+    (existing.fx_quote_id || null) === (payload.fxQuoteId || null)
   );
 }
 
@@ -38,6 +42,10 @@ function validatePayload(payload) {
 
   if (!payload.currency || !/^[A-Z]{3}$/.test(payload.currency.toUpperCase())) {
     return "INVALID_CURRENCY";
+  }
+
+  if (payload.fxQuoteId && !/^[0-9a-f-]{36}$/i.test(payload.fxQuoteId)) {
+    return "INVALID_QUOTE_ID";
   }
 
   return null;
@@ -78,9 +86,9 @@ function createLedgerService({ dbPool }) {
         const existing = existingTransfer.rows[0];
 
         if (!isSameTransferPayload(existing, payload)) {
-          const err = new Error("IDEMPOTENCY_KEY_PAYLOAD_MISMATCH");
-          err.statusCode = 409;
-          throw err;
+          throw Object.assign(new Error("IDEMPOTENCY_KEY_PAYLOAD_MISMATCH"), {
+            statusCode: 409,
+          });
         }
 
         await client.query("COMMIT");
@@ -107,50 +115,113 @@ function createLedgerService({ dbPool }) {
         (w) => w.wallet_id === payload.receiverWalletId,
       );
 
-      if (!sender || !receiver) {
-        throw Object.assign(new Error("WALLET_NOT_FOUND"), { statusCode: 404 });
+      let fxQuoteId = null;
+      let fxRateLocked = null;
+      let debitAmount = payload.amountMinor;
+      let creditAmount = payload.amountMinor;
+      let creditCurrency = currency;
+
+      if (payload.fxQuoteId) {
+        const quoteRes = await client.query(
+          `SELECT * FROM fx_quotes WHERE quote_id = $1 FOR UPDATE`,
+          [payload.fxQuoteId],
+        );
+
+        if (quoteRes.rowCount === 0) {
+          throw Object.assign(new Error("QUOTE_NOT_FOUND"), {
+            statusCode: 404,
+          });
+        }
+
+        const quote = quoteRes.rows[0];
+
+        if (quote.status !== "ACTIVE") {
+          throw Object.assign(new Error("QUOTE_ALREADY_USED_OR_EXPIRED"), {
+            statusCode: 409,
+          });
+        }
+
+        if (new Date(quote.expires_at) <= new Date()) {
+          await client.query(
+            `UPDATE fx_quotes SET status='EXPIRED' WHERE quote_id=$1`,
+            [payload.fxQuoteId],
+          );
+          throw Object.assign(new Error("QUOTE_EXPIRED"), { statusCode: 409 });
+        }
+
+        if (sender.currency !== quote.source_currency) {
+          throw Object.assign(new Error("FX_SOURCE_CURRENCY_MISMATCH"), {
+            statusCode: 409,
+          });
+        }
+
+        if (receiver.currency !== quote.target_currency) {
+          throw Object.assign(new Error("FX_TARGET_CURRENCY_MISMATCH"), {
+            statusCode: 409,
+          });
+        }
+
+        fxQuoteId = quote.quote_id;
+        fxRateLocked = Number(quote.rate);
+
+        debitAmount = payload.amountMinor;
+        creditAmount = Math.floor(payload.amountMinor * fxRateLocked);
+        creditCurrency = quote.target_currency;
+
+        await client.query(
+          `UPDATE fx_quotes SET status='USED', used_at=NOW() WHERE quote_id=$1`,
+          [fxQuoteId],
+        );
+      } else {
+        if (sender.currency !== currency || receiver.currency !== currency) {
+          throw Object.assign(new Error("CURRENCY_MISMATCH"), {
+            statusCode: 409,
+          });
+        }
       }
 
-      if (sender.currency !== currency || receiver.currency !== currency) {
-        throw Object.assign(new Error("CURRENCY_MISMATCH"), {
-          statusCode: 409,
-        });
-      }
-
-      if (BigInt(sender.balance_minor) < BigInt(payload.amountMinor)) {
+      if (BigInt(sender.balance_minor) < BigInt(debitAmount)) {
         throw Object.assign(new Error("INSUFFICIENT_FUNDS"), {
           statusCode: 409,
         });
       }
 
       const transferRes = await client.query(
-        `INSERT INTO transfers (idempotency_key, sender_wallet_id, receiver_wallet_id, amount_minor, currency, status)
-         VALUES ($1, $2, $3, $4, $5, 'PENDING')
+        `INSERT INTO transfers
+         (idempotency_key, sender_wallet_id, receiver_wallet_id, amount_minor, currency, status, fx_quote_id, fx_rate_locked)
+         VALUES ($1, $2, $3, $4, $5, 'PENDING', $6, $7)
          RETURNING *`,
         [
           payload.idempotencyKey,
           payload.senderWalletId,
           payload.receiverWalletId,
-          payload.amountMinor,
-          currency,
+          debitAmount,
+          sender.currency,
+          fxQuoteId,
+          fxRateLocked,
         ],
       );
 
       const transfer = transferRes.rows[0];
 
       await client.query(
-        `INSERT INTO ledger_entries (entry_id, transfer_id, wallet_id, direction, amount_minor, currency)
+        `INSERT INTO ledger_entries
+         (entry_id, transfer_id, wallet_id, direction, amount_minor, currency, fx_quote_id, fx_rate_locked)
          VALUES
-         ($1, $3, $4, 'DEBIT', $5, $6),
-         ($2, $3, $7, 'CREDIT', $5, $6)`,
+         ($1, $3, $4, 'DEBIT', $5, $6, $9, $10),
+         ($2, $3, $7, 'CREDIT', $8, $11, $9, $10)`,
         [
           randomUUID(),
           randomUUID(),
           transfer.transfer_id,
           payload.senderWalletId,
-          payload.amountMinor,
-          currency,
+          debitAmount,
+          sender.currency,
           payload.receiverWalletId,
+          creditAmount,
+          fxQuoteId,
+          fxRateLocked,
+          creditCurrency,
         ],
       );
 
@@ -158,11 +229,16 @@ function createLedgerService({ dbPool }) {
         `UPDATE wallets
          SET balance_minor = CASE
            WHEN wallet_id = $1 THEN balance_minor - $3
-           WHEN wallet_id = $2 THEN balance_minor + $3
+           WHEN wallet_id = $2 THEN balance_minor + $4
          END,
          updated_at = NOW()
          WHERE wallet_id IN ($1, $2)`,
-        [payload.senderWalletId, payload.receiverWalletId, payload.amountMinor],
+        [
+          payload.senderWalletId,
+          payload.receiverWalletId,
+          debitAmount,
+          creditAmount,
+        ],
       );
 
       const check = await client.query(
@@ -179,8 +255,7 @@ function createLedgerService({ dbPool }) {
       }
 
       const final = await client.query(
-        `UPDATE transfers SET status='COMPLETED'
-         WHERE transfer_id=$1 RETURNING *`,
+        `UPDATE transfers SET status='COMPLETED' WHERE transfer_id=$1 RETURNING *`,
         [transfer.transfer_id],
       );
 
@@ -196,18 +271,6 @@ function createLedgerService({ dbPool }) {
       return toPublicTransfer(final.rows[0], false);
     } catch (error) {
       await client.query("ROLLBACK");
-
-      if (error.code === "23505") {
-        const retry = await dbPool.query(
-          `SELECT * FROM transfers WHERE idempotency_key = $1`,
-          [payload.idempotencyKey],
-        );
-
-        if (retry.rowCount === 1) {
-          return toPublicTransfer(retry.rows[0], true);
-        }
-      }
-
       throw error;
     } finally {
       client.release();

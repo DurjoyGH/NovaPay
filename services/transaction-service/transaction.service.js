@@ -28,16 +28,6 @@ function toPublicTransfer(row) {
   };
 }
 
-function sanitizePayload(payload) {
-  return {
-    senderWalletId: payload.senderWalletId,
-    receiverWalletId: payload.receiverWalletId,
-    amountMinor: payload.amountMinor,
-    currency: payload.currency,
-    fxQuoteId: payload.fxQuoteId || null,
-  };
-}
-
 function createTransactionService({ dbPool }) {
   const ledgerService = createLedgerService({ dbPool });
 
@@ -57,16 +47,81 @@ function createTransactionService({ dbPool }) {
 
     const idempotencyKey = keyFromHeader || keyFromBody;
 
-    if (!idempotencyKey || typeof idempotencyKey !== "string") {
+    if (!idempotencyKey) {
       throw createError("MISSING_IDEMPOTENCY_KEY");
     }
 
-    const transferPayload = {
-      ...sanitizePayload(payload),
-      idempotencyKey,
-    };
+    const client = await dbPool.connect();
 
-    return ledgerService.createTransfer(transferPayload);
+    try {
+      await client.query("BEGIN");
+
+      let fxQuote = null;
+
+      if (payload.fxQuoteId) {
+        if (!isUUID(payload.fxQuoteId)) {
+          throw createError("INVALID_QUOTE_ID");
+        }
+
+        const quoteRes = await client.query(
+          `SELECT * FROM fx_quotes
+           WHERE quote_id = $1
+           FOR UPDATE`,
+          [payload.fxQuoteId],
+        );
+
+        if (quoteRes.rowCount === 0) {
+          throw createError("QUOTE_NOT_FOUND", 404);
+        }
+
+        const quote = quoteRes.rows[0];
+
+        if (quote.status !== "ACTIVE") {
+          throw createError("QUOTE_ALREADY_USED_OR_EXPIRED", 409);
+        }
+
+        if (new Date(quote.expires_at) <= new Date()) {
+          await client.query(
+            `UPDATE fx_quotes SET status='EXPIRED' WHERE quote_id=$1`,
+            [payload.fxQuoteId],
+          );
+          throw createError("QUOTE_EXPIRED", 409);
+        }
+
+        await client.query(
+          `UPDATE fx_quotes
+           SET status='USED', used_at=NOW()
+           WHERE quote_id=$1`,
+          [payload.fxQuoteId],
+        );
+
+        fxQuote = quote;
+      }
+
+      const transferPayload = {
+        senderWalletId: payload.senderWalletId,
+        receiverWalletId: payload.receiverWalletId,
+        amountMinor: payload.amountMinor,
+        currency: fxQuote ? fxQuote.source_currency : payload.currency,
+        idempotencyKey,
+        fxQuoteId: fxQuote ? fxQuote.quote_id : null,
+        fxRateLocked: fxQuote ? fxQuote.rate : null,
+      };
+
+      const result = await ledgerService.createTransfer(
+        transferPayload,
+        client,
+      );
+
+      await client.query("COMMIT");
+
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async function getTransferById(transferId) {
@@ -75,10 +130,7 @@ function createTransactionService({ dbPool }) {
     }
 
     const result = await dbPool.query(
-      `SELECT transfer_id, idempotency_key, sender_wallet_id, receiver_wallet_id,
-              amount_minor, currency, status, created_at, fx_quote_id, fx_rate_locked
-       FROM transfers
-       WHERE transfer_id = $1`,
+      `SELECT * FROM transfers WHERE transfer_id = $1`,
       [transferId],
     );
 
@@ -87,8 +139,7 @@ function createTransactionService({ dbPool }) {
     }
 
     const ledgerRows = await dbPool.query(
-      `SELECT entry_id, wallet_id, direction, amount_minor, currency, created_at
-       FROM ledger_entries
+      `SELECT * FROM ledger_entries
        WHERE transfer_id = $1
        ORDER BY created_at ASC`,
       [transferId],
@@ -124,9 +175,7 @@ function createTransactionService({ dbPool }) {
     }
 
     const result = await dbPool.query(
-      `SELECT transfer_id, idempotency_key, sender_wallet_id, receiver_wallet_id,
-              amount_minor, currency, status, created_at, fx_quote_id, fx_rate_locked
-       FROM transfers
+      `SELECT * FROM transfers
        WHERE sender_wallet_id = $1 OR receiver_wallet_id = $1
        ORDER BY created_at DESC
        LIMIT $2`,
