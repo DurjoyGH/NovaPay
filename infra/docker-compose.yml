@@ -1,4 +1,23 @@
 services:
+  app:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.app
+    container_name: novapay-app
+    restart: unless-stopped
+    environment:
+      PORT: 3000
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: novapay
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${APP_HOST_PORT:-3002}:3000"
+
   postgres:
     image: postgres:16-alpine
     container_name: novapay-postgres
@@ -9,6 +28,12 @@ services:
       - "5433:5432"
     volumes:
       - novapay_pgdata:/var/lib/postgresql/data
+      - ../shared/db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d novapay"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
       
 volumes:
   novapay_pgdata:

@@ -51,77 +51,20 @@ function createTransactionService({ dbPool }) {
       throw createError("MISSING_IDEMPOTENCY_KEY");
     }
 
-    const client = await dbPool.connect();
-
-    try {
-      await client.query("BEGIN");
-
-      let fxQuote = null;
-
-      if (payload.fxQuoteId) {
-        if (!isUUID(payload.fxQuoteId)) {
-          throw createError("INVALID_QUOTE_ID");
-        }
-
-        const quoteRes = await client.query(
-          `SELECT * FROM fx_quotes
-           WHERE quote_id = $1
-           FOR UPDATE`,
-          [payload.fxQuoteId],
-        );
-
-        if (quoteRes.rowCount === 0) {
-          throw createError("QUOTE_NOT_FOUND", 404);
-        }
-
-        const quote = quoteRes.rows[0];
-
-        if (quote.status !== "ACTIVE") {
-          throw createError("QUOTE_ALREADY_USED_OR_EXPIRED", 409);
-        }
-
-        if (new Date(quote.expires_at) <= new Date()) {
-          await client.query(
-            `UPDATE fx_quotes SET status='EXPIRED' WHERE quote_id=$1`,
-            [payload.fxQuoteId],
-          );
-          throw createError("QUOTE_EXPIRED", 409);
-        }
-
-        await client.query(
-          `UPDATE fx_quotes
-           SET status='USED', used_at=NOW()
-           WHERE quote_id=$1`,
-          [payload.fxQuoteId],
-        );
-
-        fxQuote = quote;
-      }
-
-      const transferPayload = {
-        senderWalletId: payload.senderWalletId,
-        receiverWalletId: payload.receiverWalletId,
-        amountMinor: payload.amountMinor,
-        currency: fxQuote ? fxQuote.source_currency : payload.currency,
-        idempotencyKey,
-        fxQuoteId: fxQuote ? fxQuote.quote_id : null,
-        fxRateLocked: fxQuote ? fxQuote.rate : null,
-      };
-
-      const result = await ledgerService.createTransfer(
-        transferPayload,
-        client,
-      );
-
-      await client.query("COMMIT");
-
-      return result;
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
+    if (payload.fxQuoteId && !isUUID(payload.fxQuoteId)) {
+      throw createError("INVALID_QUOTE_ID");
     }
+
+    const transferPayload = {
+      senderWalletId: payload.senderWalletId,
+      receiverWalletId: payload.receiverWalletId,
+      amountMinor: payload.amountMinor,
+      currency: payload.currency,
+      idempotencyKey,
+      fxQuoteId: payload.fxQuoteId || null,
+    };
+
+    return ledgerService.createTransfer(transferPayload);
   }
 
   async function getTransferById(transferId) {

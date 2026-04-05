@@ -67,14 +67,35 @@ function createLedgerService({ dbPool }) {
     try {
       await client.query("BEGIN");
 
-      try {
-        await client.query(
-          `INSERT INTO idempotency_keys (idempotency_key, request_hash, status, expires_at)
-           VALUES ($1, $2, 'IN_PROGRESS', NOW() + INTERVAL '24 hours')`,
-          [payload.idempotencyKey, requestHash],
-        );
-      } catch (e) {
-        if (e.code !== "23505") throw e;
+      await client.query(
+        `INSERT INTO idempotency_keys (idempotency_key, request_hash, status, expires_at)
+         VALUES ($1, $2, 'IN_PROGRESS', NOW() + INTERVAL '24 hours')
+         ON CONFLICT (idempotency_key) DO NOTHING`,
+        [payload.idempotencyKey, requestHash],
+      );
+
+      const idempotencyRow = await client.query(
+        `SELECT idempotency_key, request_hash, expires_at
+         FROM idempotency_keys
+         WHERE idempotency_key = $1
+         FOR UPDATE`,
+        [payload.idempotencyKey],
+      );
+
+      if (idempotencyRow.rowCount === 1) {
+        const idem = idempotencyRow.rows[0];
+
+        if (idem.request_hash !== requestHash) {
+          throw Object.assign(new Error("IDEMPOTENCY_KEY_PAYLOAD_MISMATCH"), {
+            statusCode: 409,
+          });
+        }
+
+        if (new Date(idem.expires_at) <= new Date()) {
+          throw Object.assign(new Error("IDEMPOTENCY_KEY_EXPIRED"), {
+            statusCode: 409,
+          });
+        }
       }
 
       const existingTransfer = await client.query(
