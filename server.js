@@ -12,6 +12,9 @@ const {
   createTransactionRouter,
 } = require("./services/transaction-service/transaction.routes");
 const {
+  createInternationalTransferAliasRouter,
+} = require("./services/transaction-service/transaction.alias.routes");
+const {
   metricsMiddleware,
   metricsHandler,
 } = require("./shared/observability/metrics");
@@ -84,6 +87,7 @@ function createServer({ dbPool }) {
   app.use("/accounts", createAccountRouter({ dbPool }));
   app.use("/fx", createFxRouter({ dbPool }));
   app.use("/transactions", createTransactionRouter({ dbPool }));
+  app.use("/transfers", createInternationalTransferAliasRouter({ dbPool }));
 
   app.use((error, req, res, next) => {
     const statusCode = error.statusCode || 500;

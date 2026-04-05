@@ -1,5 +1,7 @@
 const { randomUUID, createHash } = require("crypto");
-const { incrementLedgerInvariantViolation } = require("../../shared/observability/metrics");
+const {
+  incrementLedgerInvariantViolation,
+} = require("../../shared/observability/metrics");
 
 function hashPayload(payload) {
   return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
@@ -265,14 +267,31 @@ function createLedgerService({ dbPool }) {
 
       const check = await client.query(
         `SELECT
-           SUM(CASE WHEN direction='DEBIT' THEN amount_minor ELSE 0 END) AS debit,
-           SUM(CASE WHEN direction='CREDIT' THEN amount_minor ELSE 0 END) AS credit
+           COUNT(*) AS entry_count,
+           SUM(CASE WHEN direction='DEBIT' THEN 1 ELSE 0 END) AS debit_count,
+           SUM(CASE WHEN direction='CREDIT' THEN 1 ELSE 0 END) AS credit_count,
+           SUM(CASE WHEN direction='DEBIT' THEN amount_minor ELSE 0 END) AS debit_amount,
+           SUM(CASE WHEN direction='CREDIT' THEN amount_minor ELSE 0 END) AS credit_amount,
+           MIN(CASE WHEN direction='DEBIT' THEN currency ELSE NULL END) AS debit_currency,
+           MIN(CASE WHEN direction='CREDIT' THEN currency ELSE NULL END) AS credit_currency
          FROM ledger_entries
          WHERE transfer_id = $1`,
         [transfer.transfer_id],
       );
 
-      if (check.rows[0].debit !== check.rows[0].credit) {
+      const invariant = check.rows[0];
+      const isMalformedEntries =
+        Number(invariant.entry_count) !== 2 ||
+        Number(invariant.debit_count) !== 1 ||
+        Number(invariant.credit_count) !== 1;
+
+      const isSameCurrencyTransfer = !fxQuoteId;
+      const isSameCurrencyAmountMismatch =
+        isSameCurrencyTransfer &&
+        (invariant.debit_amount !== invariant.credit_amount ||
+          invariant.debit_currency !== invariant.credit_currency);
+
+      if (isMalformedEntries || isSameCurrencyAmountMismatch) {
         incrementLedgerInvariantViolation();
         throw new Error("LEDGER_INVARIANT_VIOLATION");
       }

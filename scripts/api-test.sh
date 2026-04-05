@@ -290,6 +290,23 @@ call_api "POST" "/fx/quote" '{"sourceCurrency":"USD","targetCurrency":"USD"}'
 assert_status "201" "FX single-use quote created"
 FX_QUOTE_USED=$(json_get "$RESPONSE_BODY" "data.quoteId" 2>/dev/null || true)
 
+# International alias validation
+KEY_ALIAS_MISSING="key-alias-missing-$(uuid)"
+PAYLOAD_ALIAS_MISSING="{\"senderWalletId\":\"$SENDER_WALLET_ID\",\"receiverWalletId\":\"$RECEIVER_WALLET_ID\",\"amountMinor\":500,\"currency\":\"USD\"}"
+call_api "POST" "/transfers/international" "$PAYLOAD_ALIAS_MISSING" -H "idempotency-key: $KEY_ALIAS_MISSING"
+assert_status "400" "POST /transfers/international requires fxQuoteId"
+assert_body_contains "MISSING_FX_QUOTE_ID" "POST /transfers/international missing quote error"
+
+# International alias success path
+call_api "POST" "/fx/quote" '{"sourceCurrency":"USD","targetCurrency":"USD"}'
+assert_status "201" "International alias quote created"
+FX_QUOTE_ALIAS=$(json_get "$RESPONSE_BODY" "data.quoteId" 2>/dev/null || true)
+
+KEY_ALIAS_OK="key-alias-ok-$(uuid)"
+PAYLOAD_ALIAS_OK="{\"senderWalletId\":\"$SENDER_WALLET_ID\",\"receiverWalletId\":\"$RECEIVER_WALLET_ID\",\"amountMinor\":800,\"currency\":\"USD\",\"fxQuoteId\":\"$FX_QUOTE_ALIAS\"}"
+call_api "POST" "/transfers/international" "$PAYLOAD_ALIAS_OK" -H "idempotency-key: $KEY_ALIAS_OK"
+assert_status "201" "POST /transfers/international success"
+
 KEY_FX1="key-fx-1-$(uuid)"
 PAYLOAD_FX1="{\"senderWalletId\":\"$SENDER_WALLET_ID\",\"receiverWalletId\":\"$RECEIVER_WALLET_ID\",\"amountMinor\":1000,\"currency\":\"USD\",\"fxQuoteId\":\"$FX_QUOTE_USED\"}"
 call_api "POST" "/transactions/transfers" "$PAYLOAD_FX1" -H "idempotency-key: $KEY_FX1"
@@ -337,7 +354,7 @@ fi
 
 # Scenario C: atomicity guard check via ledger invariant query
 if run_sql "SELECT 1;" >/dev/null 2>&1; then
-  BROKEN_COUNT=$(run_sql "SELECT COUNT(*) FROM (SELECT transfer_id, SUM(CASE WHEN direction='DEBIT' THEN amount_minor ELSE 0 END) AS debit_total, SUM(CASE WHEN direction='CREDIT' THEN amount_minor ELSE 0 END) AS credit_total, COUNT(*) AS entry_count FROM ledger_entries GROUP BY transfer_id) t WHERE t.debit_total <> t.credit_total OR t.entry_count <> 2;" | tr -d '[:space:]')
+  BROKEN_COUNT=$(run_sql "SELECT COUNT(*) FROM (SELECT transfer_id, COUNT(*) AS entry_count, SUM(CASE WHEN direction='DEBIT' THEN 1 ELSE 0 END) AS debit_count, SUM(CASE WHEN direction='CREDIT' THEN 1 ELSE 0 END) AS credit_count FROM ledger_entries GROUP BY transfer_id) t WHERE t.entry_count <> 2 OR t.debit_count <> 1 OR t.credit_count <> 1;" | tr -d '[:space:]')
   assert_int_eq 0 "${BROKEN_COUNT:-0}" "Scenario C no partial/unbalanced ledger entries"
 else
   log_skip "Scenario C ledger atomicity query" "database shell access unavailable"
