@@ -4,10 +4,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "api:test": "bash scripts/api-test.sh",
-    "observability:demo": "bash scripts/observability-demo.sh",
-    "alerts:check": "bash scripts/alerts-check.sh"
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
   "license": "ISC",

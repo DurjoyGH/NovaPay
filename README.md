@@ -1,6 +1,6 @@
 # NovaPay
 
-This README document describes project features, setup instructions and some insights.
+This README document describes project features, setup instructions, api end-points and some insights.
 
 ## 1. Setup Instructions and Run Steps
 

@@ -45,7 +45,11 @@ function metricsMiddleware(req, res, next) {
 
     httpDuration.labels(req.method, route, statusCode).observe(elapsedSeconds);
 
-    if (route === "/transactions/transfers" && req.method === "POST") {
+    if (
+      (route === "/transactions/transfers" ||
+        route === "/transfers/international") &&
+      req.method === "POST"
+    ) {
       const outcome = res.statusCode < 400 ? "success" : "failed";
       transactionThroughput.labels(outcome, "transaction").inc();
     }
