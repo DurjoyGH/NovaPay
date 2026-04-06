@@ -1,6 +1,6 @@
 # NovaPay
 
-This README documents what is currently implemented in this project, in simple language.
+This README document describes project features, setup instructions and some insights.
 
 ## 1. Setup Instructions and Run Steps
 
@@ -19,6 +19,8 @@ Open the system:
 - API base: `http://localhost:3000`
 - Prometheus: `http://localhost:9090`
 - Grafana: `http://localhost:3001`
+	- Username: `admin`
+	- Password: `admin`
 - Jaeger: `http://localhost:16686`
 
 Stop containers:

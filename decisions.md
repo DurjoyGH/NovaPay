@@ -1,4 +1,4 @@
-# NovaPay Decisions (Simple Status)
+# NovaPay Decisions
 
 Date: 2026-04-06
 
@@ -59,7 +59,7 @@ Problem 3 (FX Locking) current status:
 - Expiry + single-use + provider-down error handling: done
 
 Problem 4 (Field-Level Encryption) current status:
-- Not done yet.
+- Not done.
 
 What I could not fully complete:
 - Unit tests per service are not done yet.
@@ -81,17 +81,7 @@ What I could not fully complete:
 ## Checkpoint 4: CI/CD
 
 Current status:
-- Not done now.
-
-Reason:
-- CI/CD workflow was deleted from the repository.
-
-What is missing now:
-- Changed-service detection in CI.
-- Selective test/build only for changed service.
-- Merge blocking on test/build failure.
-- Docker image semantic version tagging per service package version.
-- Enforced version bump policy on each changed service.
+- Not done
 
 ## Final Summary
 
@@ -107,4 +97,4 @@ Main things not done:
 - Full unit test coverage per service.
 - Admin Service.
 - True microservice isolation with separate database per service.
-- CI/CD workflow (currently deleted).
+- CI/CD workflow.
