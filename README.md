@@ -16,7 +16,7 @@ docker compose -f infra/docker-compose.yml up -d --build
 ```
 
 Open the system:
-- API base: `http://localhost:3002`
+- API base: `http://localhost:3000`
 - Prometheus: `http://localhost:9090`
 - Grafana: `http://localhost:3001`
 - Jaeger: `http://localhost:16686`
